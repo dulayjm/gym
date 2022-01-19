@@ -19,6 +19,54 @@ from gym import spaces, logger
 from gym.utils import seeding
 import numpy as np
 
+# import sys
+# # sys.path.append('/usr/local/lib/python3.9/site-packages/render_browser/')
+# sys.path.insert(0, r'/usr/local/lib/python3.9/site-packages/render_browser/')
+
+
+# from render_browser import render_browser
+
+
+##### # # # # #  okay kids, we are just doing this right here 
+
+
+import os
+import cv2
+from flask import Flask, request, render_template, Response
+
+DIR_PATH = os.path.dirname(os.path.abspath(__file__))
+TEMPLATE_PATH = os.path.join(DIR_PATH, 'templates/')
+
+app = Flask(__name__, template_folder=TEMPLATE_PATH)
+
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+def frame_gen(env_func, *args, **kwargs):
+    get_frame = env_func(*args, **kwargs)
+    while True:
+        # but get_frame is returning a NoneType ...
+        frame = next(get_frame, None)
+        if frame is not None:
+            _, frame = cv2.imencode('.png', frame)
+            frame = frame.tobytes()
+            yield (b'--frame\r\n' + b'Content-Type: image/png\r\n\r\n' + frame + b'\r\n')
+
+def render_browser(env_func):
+    def wrapper(*args, **kwargs):
+        @app.route('/render_feed')
+        def render_feed():
+            return Response(frame_gen(env_func, *args, **kwargs), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+        print("Starting rendering, check `server_ip:5001`.")
+        app.run(host='localhost', port='5001', debug=False)
+
+    return wrapper
+
+
+######### # # # # # 
 
 class CartPoleEnv(gym.Env):
     """
@@ -69,6 +117,7 @@ class CartPoleEnv(gym.Env):
 
     metadata = {"render.modes": ["human", "rgb_array"], "video.frames_per_second": 50}
 
+    # now we can parameterize this ...
     def __init__(self):
         self.gravity = 9.8
         self.masscart = 1.0
@@ -231,9 +280,35 @@ class CartPoleEnv(gym.Env):
         self.carttrans.set_translation(cartx, carty)
         self.poletrans.set_rotation(-x[2])
 
+        # change here to render desktop vs browser
         return self.viewer.render(return_rgb_array=mode == "rgb_array")
+        # return self.render(mode='rgb_array')
 
     def close(self):
         if self.viewer:
             self.viewer.close()
             self.viewer = None
+
+
+@render_browser
+def run():
+    env = gym.make('CartPole-v0')
+    for i_episode in range(20):
+        observation = env.reset()
+        for t in range(100):
+            # now let's change this how we render it ...
+
+            # render
+            yield env.render(mode = "rgb_array")
+            # log
+            print(observation)
+            # policy actions and steps 
+            action = env.action_space.sample()
+            observation, reward, done, info = env.step(action)
+            if done:
+                print("Episode finished after {} timesteps".format(t+1))
+                break
+    env.close()
+
+if __name__ ==  '__main__':
+    run()
